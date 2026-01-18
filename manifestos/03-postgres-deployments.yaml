@@ -1,0 +1,209 @@
+# PostgreSQL para auth-service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-auth
+  namespace: togglemaster
+  labels:
+    app: postgres-auth
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-auth
+  template:
+    metadata:
+      labels:
+        app: postgres-auth
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: postgres-auth-config
+            - secretRef:
+                name: postgres-auth-secrets
+          volumeMounts:
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - name: init-sql
+          configMap:
+            name: auth-db-init
+        - name: postgres-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-auth
+  namespace: togglemaster
+spec:
+  selector:
+    app: postgres-auth
+  ports:
+    - port: 5432
+      targetPort: 5432
+  type: ClusterIP
+---
+# PostgreSQL para flag-service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-flag
+  namespace: togglemaster
+  labels:
+    app: postgres-flag
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-flag
+  template:
+    metadata:
+      labels:
+        app: postgres-flag
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: postgres-flag-config
+            - secretRef:
+                name: postgres-flag-secrets
+          volumeMounts:
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - name: init-sql
+          configMap:
+            name: flag-db-init
+        - name: postgres-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-flag
+  namespace: togglemaster
+spec:
+  selector:
+    app: postgres-flag
+  ports:
+    - port: 5432
+      targetPort: 5432
+  type: ClusterIP
+---
+# PostgreSQL para targeting-service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-targeting
+  namespace: togglemaster
+  labels:
+    app: postgres-targeting
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-targeting
+  template:
+    metadata:
+      labels:
+        app: postgres-targeting
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: postgres-targeting-config
+            - secretRef:
+                name: postgres-targeting-secrets
+          volumeMounts:
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - name: init-sql
+          configMap:
+            name: targeting-db-init
+        - name: postgres-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-targeting
+  namespace: togglemaster
+spec:
+  selector:
+    app: postgres-targeting
+  ports:
+    - port: 5432
+      targetPort: 5432
+  type: ClusterIP

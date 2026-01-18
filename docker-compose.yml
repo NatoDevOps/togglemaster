@@ -1,0 +1,259 @@
+version: '3.8'
+
+services:
+  # LocalStack - Simula AWS SQS, DynamoDB, etc localmente
+  localstack:
+    image: localstack/localstack:latest
+    container_name: localstack
+    ports:
+      - "4566:4566"  # LocalStack gateway
+      - "4571:4571"  # DynamoDB
+    environment:
+      DEBUG: 1
+      SERVICES: sqs,dynamodb
+      DOCKER_HOST: unix:///var/run/docker.sock
+      AWS_ACCESS_KEY_ID: "test"
+      AWS_SECRET_ACCESS_KEY: "test"
+      AWS_DEFAULT_REGION: "us-east-1"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # PostgreSQL para auth-service
+  postgres-auth:
+    image: postgres:15-alpine
+    container_name: postgres-auth
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: auth_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./auth-service/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # PostgreSQL para flag-service
+  postgres-flag:
+    image: postgres:15-alpine
+    container_name: postgres-flag
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: flags_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./flag-service/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # PostgreSQL para targeting-service
+  postgres-targeting:
+    image: postgres:15-alpine
+    container_name: postgres-targeting
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: targeting_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - ./targeting-service/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Redis para evaluation-service
+  redis-cache:
+    image: redis:7-alpine
+    container_name: redis-cache
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Inicializador LocalStack - Cria SQS e DynamoDB AUTOMATICAMENTE
+  localstack-init:
+    image: localstack/localstack:latest
+    container_name: localstack-init
+    environment:
+      AWS_ACCESS_KEY_ID: "test"
+      AWS_SECRET_ACCESS_KEY: "test"
+      AWS_DEFAULT_REGION: "us-east-1"
+    entrypoint: >
+      bash -c "
+      echo '⏳ Aguardando LocalStack iniciar...' &&
+      sleep 20 &&
+      echo '📝 Criando SQS queue: togglemaster-events' &&
+      awslocal --endpoint-url http://localstack:4566 sqs create-queue \
+        --queue-name togglemaster-events \
+        --region us-east-1 &&
+      echo '✅ SQS criada!' &&
+      echo '📝 Criando DynamoDB table: ToggleMasterAnalytics' &&
+      awslocal --endpoint-url http://localstack:4566 dynamodb create-table \
+        --table-name ToggleMasterAnalytics \
+        --attribute-definitions AttributeName=event_id,AttributeType=S \
+        --key-schema AttributeName=event_id,KeyType=HASH \
+        --provisioned-throughput ReadCapacityUnits=1,WriteCapacityUnits=1 \
+        --region us-east-1 &&
+      echo '✅ DynamoDB criada!' &&
+      echo '🎉 LocalStack inicializado com sucesso!' &&
+      sleep infinity
+      "
+    depends_on:
+      localstack:
+        condition: service_healthy
+
+  # auth-service (Go) - USA WGET (Alpine não tem curl)
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: auth-service.Dockerfile
+    container_name: auth-service
+    ports:
+      - "8001:8001"
+    environment:
+      PORT: "8001"
+      DATABASE_URL: "postgres://postgres:postgres@postgres-auth:5432/auth_db"
+      MASTER_KEY: "admin-secreto-123"
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # flag-service (Python)
+  flag-service:
+    build:
+      context: ./flag-service
+      dockerfile: flag-service.Dockerfile
+    container_name: flag-service
+    ports:
+      - "8002:8002"
+    environment:
+      PORT: "8002"
+      DATABASE_URL: "postgres://postgres:postgres@postgres-flag:5432/flags_db"
+      AUTH_SERVICE_URL: "http://auth-service:8001"
+    depends_on:
+      postgres-flag:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # targeting-service (Python)
+  targeting-service:
+    build:
+      context: ./targeting-service
+      dockerfile: targeting-service.Dockerfile
+    container_name: targeting-service
+    ports:
+      - "8003:8003"
+    environment:
+      PORT: "8003"
+      DATABASE_URL: "postgres://postgres:postgres@postgres-targeting:5432/targeting_db"
+      AUTH_SERVICE_URL: "http://auth-service:8001"
+    depends_on:
+      postgres-targeting:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # evaluation-service (Go) - USA WGET (Alpine não tem curl)
+  evaluation-service:
+    build:
+      context: ./evaluation-service
+      dockerfile: evaluation-service.Dockerfile
+    container_name: evaluation-service
+    ports:
+      - "8004:8004"
+    environment:
+      PORT: "8004"
+      REDIS_URL: "redis://redis-cache:6379"
+      FLAG_SERVICE_URL: "http://flag-service:8002"
+      TARGETING_SERVICE_URL: "http://targeting-service:8003"
+      SERVICE_API_KEY: "tm_key_01f530e66663ae6ddc710e499472022f37be021c92e15e3dcfd7e188e14d6d47"
+      AWS_SQS_URL: "http://localstack:4566/000000000000/togglemaster-events"
+      AWS_REGION: "us-east-1"
+      AWS_ACCESS_KEY_ID: "test"
+      AWS_SECRET_ACCESS_KEY: "test"
+    depends_on:
+      redis-cache:
+        condition: service_healthy
+      flag-service:
+        condition: service_healthy
+      targeting-service:
+        condition: service_healthy
+      localstack-init:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8004/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # analytics-service (Python)
+  analytics-service:
+    build:
+      context: ./analytics-service
+      dockerfile: analytics-service.Dockerfile
+    container_name: analytics-service
+    ports:
+      - "8005:8005"
+    environment:
+      PORT: "8005"
+      AWS_SQS_URL: "http://localstack:4566/000000000000/togglemaster-events"
+      AWS_DYNAMODB_TABLE: "ToggleMasterAnalytics"
+      AWS_REGION: "us-east-1"
+      AWS_ACCESS_KEY_ID: "test"
+      AWS_SECRET_ACCESS_KEY: "test"
+    depends_on:
+      localstack-init:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  postgres-auth-data:
+  postgres-flag-data:
+  postgres-targeting-data:

@@ -1,0 +1,38 @@
+# KEDA ScaledObject para analytics-service
+# Escala baseado no tamanho da fila SQS do LocalStack
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: analytics-service-scaledobject
+  namespace: togglemaster
+spec:
+  scaleTargetRef:
+    name: analytics-service
+  pollingInterval: 15          # Verifica a fila a cada 15 segundos
+  cooldownPeriod: 30           # Aguarda 30 segundos antes de escalar para baixo
+  minReplicaCount: 0           # Pode escalar até 0 quando não há mensagens
+  maxReplicaCount: 10          # Máximo de 10 pods
+  triggers:
+    - type: aws-sqs-queue
+      metadata:
+        queueURL: http://localstack.togglemaster.svc.cluster.local:4566/000000000000/togglemaster-events
+        queueLength: "5"       # Escala quando há mais de 5 mensagens por pod
+        awsRegion: us-east-1
+        scaleOnInFlight: "true"
+      authenticationRef:
+        name: keda-aws-credentials
+---
+# TriggerAuthentication para KEDA acessar o SQS do LocalStack
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-aws-credentials
+  namespace: togglemaster
+spec:
+  secretTargetRef:
+    - parameter: awsAccessKeyID
+      name: aws-credentials
+      key: AWS_ACCESS_KEY_ID
+    - parameter: awsSecretAccessKey
+      name: aws-credentials
+      key: AWS_SECRET_ACCESS_KEY
